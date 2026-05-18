@@ -50,6 +50,24 @@
             font-size: 12px;
         }
 
+        .node-status {
+            display: inline-block;
+            margin-left: 8px;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 11px;
+        }
+
+        .node-status.available {
+            background: rgba(76, 175, 80, 0.8);
+            color: white;
+        }
+
+        .node-status.unavailable {
+            background: rgba(244, 67, 54, 0.8);
+            color: white;
+        }
+
         .card {
             background: white;
             border-radius: 20px;
@@ -198,6 +216,14 @@
             height: 80px;
             border-radius: 8px;
             object-fit: cover;
+            background: #f0f0f0;
+        }
+
+        .video-thumbnail.placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
         }
 
         .video-details {
@@ -209,11 +235,18 @@
             color: #333;
             margin-bottom: 5px;
             font-size: 14px;
+            word-break: break-all;
         }
 
         .video-author {
             font-size: 12px;
             color: #999;
+        }
+
+        .video-size {
+            font-size: 11px;
+            color: #666;
+            margin-top: 4px;
         }
 
         .btn-download-video {
@@ -335,6 +368,40 @@
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
+
+        .thumbnail-container {
+            position: relative;
+        }
+
+        .thumbnail-loading {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 8px;
+        }
+
+        .thumbnail-loading::after {
+            content: '';
+            width: 20px;
+            height: 20px;
+            border: 2px solid #667eea;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 0.6s linear infinite;
+        }
+
+        .thumbnail-error {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #f5f5f5;
+        }
     </style>
 </head>
 <body>
@@ -342,7 +409,8 @@
         <div class="logo">
             <div class="icon">📥</div>
             <h1>视频下载器</h1>
-            <div class="version-badge" id="version">v1.3.6</div>
+            <div class="version-badge" id="version">v1.4.0</div>
+            <div class="node-status" id="nodeStatus">Node.js: 检测中...</div>
         </div>
 
         <div class="card">
@@ -364,7 +432,7 @@
             </div>
 
             <div class="tips">
-                <p>💡 提示：部分视频网站（如抖音）可能需要登录才能下载。如果遇到"需要cookies"错误，请尝试其他视频链接。</p>
+                <p>💡 提示：部分视频网站（如抖音）部分内容可能需要登录才能下载。</p>
             </div>
 
             <div class="tutorial">
@@ -415,6 +483,13 @@
             document.getElementById('url').focus();
         }
 
+        function formatFileSize(bytes) {
+            if (bytes === undefined || bytes === null) return '';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
         async function downloadVideo() {
             const url = document.getElementById('url').value.trim();
             const btn = document.getElementById('downloadBtn');
@@ -444,12 +519,25 @@
                 const data = await response.json();
 
                 if (data.success) {
+                    let thumbnailHtml = '';
+                    if (data.thumbnail && data.thumbnail.startsWith('http')) {
+                        thumbnailHtml = `
+                            <div class="thumbnail-container">
+                                <img src="${data.thumbnail}" class="video-thumbnail" 
+                                     onerror="this.style.display='none'; this.parentElement.innerHTML='<div class=\'video-thumbnail thumbnail-error\'>📷</div>';" />
+                            </div>
+                        `;
+                    } else {
+                        thumbnailHtml = '<div class="video-thumbnail placeholder">📷</div>';
+                    }
+
                     let html = `
                         <div class="video-info">
-                            ${data.thumbnail ? '<img src="' + data.thumbnail + '" class="video-thumbnail" />' : ''}
+                            ${thumbnailHtml}
                             <div class="video-details">
-                                <div class="video-title">${data.title || '视频'}</div>
-                                ${data.author ? '<div class="video-author">作者: ' + data.author + '</div>' : ''}
+                                <div class="video-title">${escapeHtml(data.title || '视频')}</div>
+                                ${data.author ? '<div class="video-author">作者: ' + escapeHtml(data.author) + '</div>' : ''}
+                                ${data.fileSize ? '<div class="video-size">大小: ' + formatFileSize(data.fileSize) + '</div>' : ''}
                             </div>
                         </div>
                         <a href="${data.videoUrl}" class="btn-download-video" download>📥 下载视频</a>
@@ -471,6 +559,12 @@
             }
         }
 
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         document.getElementById('url').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 downloadVideo();
@@ -482,6 +576,15 @@
                 const response = await fetch('/api/version');
                 const data = await response.json();
                 document.getElementById('version').textContent = data.version;
+                
+                const nodeStatus = document.getElementById('nodeStatus');
+                if (data.node_available) {
+                    nodeStatus.textContent = '✅ Node.js 已就绪';
+                    nodeStatus.className = 'node-status available';
+                } else {
+                    nodeStatus.textContent = '❌ Node.js 未配置';
+                    nodeStatus.className = 'node-status unavailable';
+                }
             } catch (e) {
                 console.log('无法获取版本信息');
             }
