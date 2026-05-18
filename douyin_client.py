@@ -4,7 +4,19 @@ import re
 
 import requests
 
-DOUYIN_API_URL = os.environ.get('DOUYIN_API_URL', 'http://127.0.0.1:80').rstrip('/')
+DOUYIN_API_URL = os.environ.get('DOUYIN_API_URL', '').rstrip('/')
+
+
+def _get_api_urls():
+    if DOUYIN_API_URL:
+        yield DOUYIN_API_URL
+        return
+
+    yield 'http://127.0.0.1:80'
+    yield 'http://127.0.0.1:8080'
+    yield 'http://localhost:80'
+    yield 'http://localhost:8080'
+    yield 'http://douyin-api:80'
 
 
 def extract_douyin_url(text):
@@ -30,10 +42,22 @@ def extract_douyin_url(text):
 
 
 def _api_get(path, params=None):
-    url = f'{DOUYIN_API_URL}{path}'
-    resp = requests.get(url, params=params, timeout=90)
-    resp.raise_for_status()
-    return resp.json()
+    errors = []
+    for base_url in _get_api_urls():
+        url = f'{base_url}{path}'
+        try:
+            resp = requests.get(url, params=params, timeout=90)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as exc:
+            errors.append(f'{base_url}: {exc}')
+            if DOUYIN_API_URL:
+                break
+
+    raise RuntimeError(
+        '解析服务不可用，请检查 DOUYIN_API_URL 或后端服务是否已启动。'
+        f' 尝试地址: {", ".join(_get_api_urls())}; 错误: {" | ".join(errors)}'
+    )
 
 
 def fetch_hybrid(url, minimal=False):

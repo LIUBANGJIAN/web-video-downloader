@@ -9,12 +9,43 @@ import requests
 import yaml
 
 CONFIG_PATH = os.environ.get('DOUYIN_CONFIG_PATH', '/data/douyin/config.yaml')
-DOUYIN_API_URL = os.environ.get('DOUYIN_API_URL', 'http://127.0.0.1:80')
+DOUYIN_API_URL = os.environ.get('DOUYIN_API_URL', '').rstrip('/')
 TEST_URL = os.environ.get(
     'DOUYIN_COOKIE_TEST_URL',
     'https://v.douyin.com/MpeyIZyxMTA/',
 )
 CHECK_INTERVAL = int(os.environ.get('COOKIE_CHECK_INTERVAL', '300'))
+
+
+def _get_api_urls():
+    if DOUYIN_API_URL:
+        yield DOUYIN_API_URL
+        return
+
+    yield 'http://127.0.0.1:80'
+    yield 'http://127.0.0.1:8080'
+    yield 'http://localhost:80'
+    yield 'http://localhost:8080'
+    yield 'http://douyin-api:80'
+
+
+def _request_douyin_api(path, params=None):
+    errors = []
+    for base_url in _get_api_urls():
+        url = f'{base_url}{path}'
+        try:
+            resp = requests.get(url, params=params, timeout=30)
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as exc:
+            errors.append(f'{base_url}: {exc}')
+            if DOUYIN_API_URL:
+                break
+
+    raise RuntimeError(
+        '解析服务不可用，请检查 DOUYIN_API_URL 或后端服务是否已启动。'
+        f' 尝试地址: {", ".join(_get_api_urls())}; 错误: {" | ".join(errors)}'
+    )
 
 _lock = threading.Lock()
 _status = 'checking'  # checking | valid | invalid | scanning
@@ -62,12 +93,10 @@ def _test_cookie_with_api():
     if not cookie or len(cookie) < 20:
         return False, '未配置 Cookie'
     try:
-        resp = requests.get(
-            f'{DOUYIN_API_URL.rstrip("/")}/api/hybrid/video_data',
+        body = _request_douyin_api(
+            '/api/hybrid/video_data',
             params={'url': TEST_URL, 'minimal': 'true'},
-            timeout=30,
         )
-        body = resp.json()
         code = body.get('code', body.get('status_code', 0))
         if code in (200, '200', 0):
             return True, 'Cookie 有效'
@@ -75,7 +104,7 @@ def _test_cookie_with_api():
         if 'cookie' in str(msg).lower():
             return False, 'Cookie 已失效'
         return False, msg
-    except requests.RequestException as e:
+    except Exception as e:
         return False, f'解析服务不可用: {e}'
 
 

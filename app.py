@@ -71,6 +71,8 @@ def video_info():
         if 'cookie' in msg.lower():
             cookie_manager.check_validity(force=True)
             return jsonify({'error': 'Cookie 已失效，请重新扫码', 'needLogin': True}), 401
+        if '解析服务不可用' in msg:
+            return jsonify({'error': msg}), 502
         return jsonify({'error': msg}), 500
 
 
@@ -106,10 +108,12 @@ def download_video():
         if 'cookie' in msg.lower():
             cookie_manager.check_validity(force=True)
             return jsonify({'error': 'Cookie 已失效，请重新扫码', 'needLogin': True}), 401
+        if '解析服务不可用' in msg:
+            return jsonify({'error': msg}), 502
         return jsonify({'error': msg}), 500
 
 
-@app.route('/download/<filename>')
+@app.route('/download/<filename>')}]}
 def serve_download(filename):
     safe = os.path.basename(filename)
     return send_file(
