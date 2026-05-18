@@ -6,7 +6,7 @@ import re
 
 app = Flask(__name__)
 
-APP_VERSION = "v1.3.2"
+APP_VERSION = "v1.3.3"
 
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
