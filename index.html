@@ -397,7 +397,7 @@
         urlInput.value = text;
         hideError();
       } catch (err) {
-        showError('无法访问剪贴板，请手动粘贴');
+        urlInput.focus();
       }
     });
 
