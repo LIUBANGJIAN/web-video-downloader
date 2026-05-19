@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>视频下载器</title>
+    <title>抖音视频下载器</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -25,8 +25,6 @@
             font-size: 11px;
             margin: 2px;
         }
-        .badge.available { background: #28a745; }
-        .badge.unavailable { background: #dc3545; }
         .badge.version { background: rgba(255,255,255,.25); }
         .card {
             background: #fff;
@@ -80,15 +78,6 @@
             cursor: pointer;
             display: none;
         }
-        .quality-group { display: none; margin-bottom: 16px; }
-        .quality-group.show { display: block; }
-        select {
-            width: 100%;
-            padding: 12px;
-            border: 2px solid #e0e0e0;
-            border-radius: 12px;
-            font-size: 15px;
-        }
         .result {
             display: none;
             padding: 14px;
@@ -127,6 +116,19 @@
             border-radius: 8px;
             font-size: 14px;
         }
+        .image-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+        }
+        .image-grid img {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            border-radius: 8px;
+            cursor: pointer;
+        }
         .footer {
             text-align: center;
             margin-top: 24px;
@@ -150,43 +152,40 @@
     <div class="container">
         <div class="logo">
             <div class="icon">📥</div>
-            <h1>视频下载器</h1>
+            <h1>抖音视频下载器</h1>
             <div class="status-bar">
-                <span class="badge version" id="version">v2.4.0</span>
-                <span class="badge" id="nodeStatus">🔄 检测中...</span>
-                <span class="badge" id="ytdlpStatus">🔄 检测中...</span>
+                <span class="badge version" id="version">v2.4.4</span>
+                <span class="badge" id="backend">douyinVd</span>
             </div>
         </div>
 
         <div class="card">
-            <label for="url">视频链接</label>
-            <input type="text" id="url" placeholder="粘贴抖音、B站、YouTube 等视频链接">
+            <label for="url">抖音链接</label>
+            <input type="text" id="url" placeholder="粘贴抖音视频或图文链接">
             <div class="row">
                 <button type="button" onclick="pasteUrl()">粘贴</button>
                 <button type="button" onclick="clearAll()">清空</button>
             </div>
 
-            <div class="quality-group" id="qualityGroup">
-                <label for="quality">画质</label>
-                <select id="quality"></select>
-            </div>
-
             <button class="btn-primary" id="parseBtn" onclick="parseVideo()">
-                <span id="parseText">解析视频</span>
+                <span id="parseText">解析链接</span>
             </button>
-            <button class="btn-secondary" id="downloadBtn" onclick="downloadVideo()">
-                <span id="dlText">下载视频</span>
+            <button class="btn-secondary" id="downloadBtn" onclick="downloadItem()">
+                <span id="dlText">下载</span>
             </button>
 
             <div class="result" id="result"><div id="resultBody"></div></div>
         </div>
 
         <div class="footer">
-            <p>基于 yt-dlp 支持多平台视频下载</p>
+            <p>基于 douyinVd 实现 · 支持视频和图文</p>
         </div>
     </div>
 
     <script>
+        let currentType = 'video';
+        let currentImageUrls = [];
+
         function showResult(html, type) {
             const box = document.getElementById('result');
             document.getElementById('resultBody').innerHTML = html;
@@ -204,38 +203,14 @@
         function clearAll() {
             document.getElementById('url').value = '';
             document.getElementById('result').className = 'result';
-            document.getElementById('qualityGroup').classList.remove('show');
             document.getElementById('downloadBtn').style.display = 'none';
-        }
-
-        function populateQuality(formats) {
-            const sel = document.getElementById('quality');
-            sel.innerHTML = '';
-            const opts = [];
-            
-            if (formats && formats.length > 0) {
-                formats.forEach(f => {
-                    opts.push({ v: f.format_id, l: f.quality });
-                });
-            } else {
-                opts.push({ v: 'best', l: '最佳画质' });
-            }
-            
-            const seen = new Set();
-            opts.forEach(o => {
-                if (seen.has(o.v)) return;
-                seen.add(o.v);
-                const op = document.createElement('option');
-                op.value = o.v;
-                op.textContent = o.l;
-                sel.appendChild(op);
-            });
-            document.getElementById('qualityGroup').classList.add('show');
+            currentType = 'video';
+            currentImageUrls = [];
         }
 
         async function parseVideo() {
             const url = document.getElementById('url').value.trim();
-            if (!url) { showResult('<p>请输入视频链接</p>', 'err'); return; }
+            if (!url) { showResult('<p>请输入抖音链接</p>', 'err'); return; }
 
             const btn = document.getElementById('parseBtn');
             const txt = document.getElementById('parseText');
@@ -250,33 +225,46 @@
                 });
                 const d = await r.json();
                 if (d.success) {
+                    currentType = d.type || 'video';
+                    currentImageUrls = d.image_url_list || [];
+                    
                     let thumbHtml = '<div class="placeholder">📹</div>';
                     if (d.thumbnail && d.thumbnail.startsWith('http')) {
                         thumbHtml = '<img src="' + d.thumbnail + '" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'" />' +
                                     '<div class="placeholder" style="display:none">📹</div>';
                     }
-                    showResult(
-                        '<div class="video-info">' + thumbHtml +
+                    
+                    let html = '<div class="video-info">' + thumbHtml +
                         '<div><div class="video-title">' + escapeHtml(d.title) + '</div>' +
                         (d.author ? '<div class="video-meta">作者: ' + escapeHtml(d.author) + '</div>' : '') +
-                        (d.site ? '<div class="video-meta">平台: ' + escapeHtml(d.site) + '</div>' : '') +
-                        '</div></div>', 'ok');
-                    populateQuality(d.formats);
+                        '<div class="video-meta">类型: ' + (currentType === 'image' ? '图文' : '视频') + '</div>' +
+                        '</div></div>';
+                    
+                    // 如果是图文，显示图片网格
+                    if (currentType === 'image' && currentImageUrls.length > 0) {
+                        html += '<div class="image-grid">';
+                        currentImageUrls.forEach((imgUrl, index) => {
+                            html += '<img src="' + imgUrl + '" onclick="downloadImage(\'' + escapeHtml(imgUrl) + '\')" title="点击下载第' + (index + 1) + '张" />';
+                        });
+                        html += '</div>';
+                    }
+                    
+                    showResult(html, 'ok');
                     document.getElementById('downloadBtn').style.display = 'block';
+                    document.getElementById('dlText').textContent = currentType === 'image' ? '下载全部图片' : '下载视频';
                 } else {
                     showResult('<p>' + (d.error || '解析失败') + '</p>', 'err');
                 }
             } catch (e) {
-                showResult('<p>网络错误</p>', 'err');
+                showResult('<p>网络错误: ' + e.message + '</p>', 'err');
             } finally {
                 btn.disabled = false;
-                txt.textContent = '解析视频';
+                txt.textContent = '解析链接';
             }
         }
 
-        async function downloadVideo() {
+        async function downloadItem() {
             const url = document.getElementById('url').value.trim();
-            const quality = document.getElementById('quality').value;
             const btn = document.getElementById('downloadBtn');
             const txt = document.getElementById('dlText');
             btn.disabled = true;
@@ -286,24 +274,36 @@
                 const r = await fetch('/api/download', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url, quality })
+                    body: JSON.stringify({ url })
                 });
                 const d = await r.json();
                 if (d.success) {
                     const mb = (d.fileSize / 1024 / 1024).toFixed(2);
-                    showResult(
-                        document.getElementById('resultBody').innerHTML +
-                        '<p style="margin-top:10px">大小: ' + mb + ' MB</p>' +
-                        '<a class="btn-dl" href="' + d.videoUrl + '" download>📥 保存视频</a>', 'ok');
+                    let html = document.getElementById('resultBody').innerHTML;
+                    if (d.imageCount && d.imageCount > 1) {
+                        html += '<p style="margin-top:10px">共 ' + d.imageCount + ' 张图片</p>';
+                    }
+                    html += '<p style="margin-top:10px">大小: ' + mb + ' MB</p>' +
+                        '<a class="btn-dl" href="' + d.videoUrl + '" download>📥 保存</a>';
+                    showResult(html, 'ok');
                 } else {
                     showResult('<p>' + (d.error || '下载失败') + '</p>', 'err');
                 }
             } catch (e) {
-                showResult('<p>网络错误</p>', 'err');
+                showResult('<p>网络错误: ' + e.message + '</p>', 'err');
             } finally {
                 btn.disabled = false;
-                txt.textContent = '下载视频';
+                txt.textContent = currentType === 'image' ? '下载全部图片' : '下载视频';
             }
+        }
+
+        function downloadImage(imgUrl) {
+            const link = document.createElement('a');
+            link.href = imgUrl;
+            link.download = 'douyin_image.jpg';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
         }
 
         function escapeHtml(t) {
@@ -316,28 +316,10 @@
             try {
                 const r = await fetch('/api/version');
                 const d = await r.json();
-                document.getElementById('version').textContent = d.version || 'v2.4.0';
-
-                const nodeEl = document.getElementById('nodeStatus');
-                if (d.node_available) {
-                    nodeEl.textContent = '✅ Node.js ' + (d.node_version || '');
-                    nodeEl.className = 'badge available';
-                } else {
-                    nodeEl.textContent = '❌ Node.js 未安装';
-                    nodeEl.className = 'badge unavailable';
-                }
-
-                const ytdlpEl = document.getElementById('ytdlpStatus');
-                if (d.ytdlp_version) {
-                    ytdlpEl.textContent = '✅ yt-dlp ' + d.ytdlp_version;
-                    ytdlpEl.className = 'badge available';
-                } else {
-                    ytdlpEl.textContent = '❌ yt-dlp 未知';
-                    ytdlpEl.className = 'badge unavailable';
-                }
+                document.getElementById('version').textContent = d.version || 'v2.4.1';
+                document.getElementById('backend').textContent = 'douyinVd';
             } catch (e) {
-                document.getElementById('nodeStatus').textContent = '❌ 检测失败';
-                document.getElementById('ytdlpStatus').textContent = '❌ 检测失败';
+                console.error('Failed to fetch version:', e);
             }
         }
 
