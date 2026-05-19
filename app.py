@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request, send_file
 from yt_dlp import YoutubeDL
+import re
 import os
 import uuid
 
@@ -18,6 +19,21 @@ def _sanitize_url(text):
     return text.strip()
 
 
+def _extract_url_from_text(text):
+    """从用户粘贴的文本中提取第一个 http(s) URL。"""
+    if not text or not isinstance(text, str):
+        return ''
+    # 尝试直接返回已清理的文本（如果看起来像 URL）
+    t = text.strip()
+    if t.startswith('http://') or t.startswith('https://'):
+        return t
+    # 正则提取第一个 http(s) URL
+    m = re.search(r"https?://[\w\-\./?%&=+#~:;,'()]+", text)
+    if m:
+        return m.group(0)
+    return ''
+
+
 def _quality_format(quality):
     q = str(quality or '').strip()
     if q.lower() in ('best', 'worst', 'source'):
@@ -29,7 +45,7 @@ def _quality_format(quality):
 
 def _extract_info(video_url):
     if not video_url:
-        raise ValueError('请输入抖音链接')
+        raise ValueError('请输入抖音链接或包含链接的文本')
 
     ydl_opts = {
         'quiet': True,
@@ -106,9 +122,10 @@ def version():
 @app.route('/api/info', methods=['POST'])
 def video_info():
     data = request.get_json() or {}
-    url = _sanitize_url(data.get('url', ''))
+    raw = data.get('url', '')
+    url = _extract_url_from_text(_sanitize_url(raw))
     if not url:
-        return jsonify({'error': '请输入抖音链接'}), 400
+        return jsonify({'error': '请输入有效的抖音分享链接或将包含链接的文本粘贴到输入框'}), 400
     try:
         info = _extract_info(url)
         return jsonify({'success': True, **info})
@@ -119,10 +136,11 @@ def video_info():
 @app.route('/api/download', methods=['POST'])
 def download_video():
     data = request.get_json() or {}
-    url = _sanitize_url(data.get('url', ''))
+    raw = data.get('url', '')
+    url = _extract_url_from_text(_sanitize_url(raw))
     quality = data.get('quality', 'best')
     if not url:
-        return jsonify({'error': '请输入抖音链接'}), 400
+        return jsonify({'error': '请输入有效的抖音分享链接或将包含链接的文本粘贴到输入框'}), 400
 
     video_id = str(uuid.uuid4())
     dest = os.path.join(app.config['UPLOAD_FOLDER'], f'{video_id}.mp4')
