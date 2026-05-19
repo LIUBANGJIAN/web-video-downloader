@@ -7,14 +7,10 @@ import subprocess
 from urllib.parse import urlparse
 import requests
 import time
-import threading
-import base64
-import json
-import tempfile
 
 app = Flask(__name__)
 
-APP_VERSION = 'v2.2.1'
+APP_VERSION = 'v2.3.0'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 app.config['COOKIES_FILE'] = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'cookies.txt')
@@ -24,9 +20,6 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 NODE_AVAILABLE = False
 NODE_VERSION = ""
 YTDLP_VERSION = ""
-DOUYIN_COOKIES = {}
-LAST_COOKIES_UPDATE = 0
-PLAYWRIGHT_AVAILABLE = False
 
 def check_nodejs():
     global NODE_AVAILABLE, NODE_VERSION
@@ -53,20 +46,8 @@ def check_ytdlp():
         YTDLP_VERSION = "未知"
         app.logger.warning(f"❌ 获取 yt-dlp 版本失败: {str(e)}")
 
-def check_playwright():
-    global PLAYWRIGHT_AVAILABLE
-    try:
-        from playwright.sync_api import sync_playwright
-        PLAYWRIGHT_AVAILABLE = True
-        app.logger.info("✅ Playwright 可用")
-    except ImportError:
-        app.logger.warning("❌ Playwright 未安装")
-    except Exception as e:
-        app.logger.warning(f"❌ 检查 Playwright 失败: {str(e)}")
-
 check_nodejs()
 check_ytdlp()
-check_playwright()
 
 USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
 
@@ -226,16 +207,16 @@ def index():
 
 @app.route('/api/version')
 def version():
-    cookies_valid = os.path.exists(app.config['COOKIES_FILE']) and (time.time() - LAST_COOKIES_UPDATE) < 3600 * 24
+    cookies_valid = os.path.exists(app.config['COOKIES_FILE'])
+    cookies_updated = os.path.getmtime(app.config['COOKIES_FILE']) if cookies_valid else 0
     return jsonify({
         'version': APP_VERSION,
         'backend': 'yt-dlp',
         'node_available': NODE_AVAILABLE,
         'node_version': NODE_VERSION,
         'ytdlp_version': YTDLP_VERSION,
-        'playwright_available': PLAYWRIGHT_AVAILABLE,
         'cookies_valid': cookies_valid,
-        'cookies_updated': LAST_COOKIES_UPDATE,
+        'cookies_updated': cookies_updated,
     })
 
 @app.route('/api/info', methods=['POST'])
@@ -303,150 +284,6 @@ def serve_download(filename):
         return jsonify({'error': '文件不存在'}), 404
     return send_file(path, as_attachment=True)
 
-login_context = None
-login_qrcode_base64 = None
-login_status = 'idle'
-login_result = None
-login_thread = None
-
-def do_qrcode_login():
-    global login_status, login_result, login_qrcode_base64
-    
-    from playwright.sync_api import sync_playwright
-    
-    try:
-        login_status = 'starting'
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=['--no-sandbox', '--disable-setuid-sandbox', '--disable-gpu', '--disable-dev-shm-usage', '--window-size=800,600'])
-            context = browser.new_context(
-                viewport={'width': 800, 'height': 600},
-                user_agent=USER_AGENT
-            )
-            page = context.new_page()
-            
-            login_status = 'navigating'
-            page.goto('https://www.douyin.com', timeout=60000)
-            page.wait_for_timeout(2000)
-            
-            login_status = 'finding_login'
-            try:
-                login_buttons = page.locator('button:has-text("登录")').all()
-                if login_buttons:
-                    login_buttons[0].click()
-                    page.wait_for_timeout(2000)
-                else:
-                    login_buttons = page.locator('a:has-text("登录")').all()
-                    if login_buttons:
-                        login_buttons[0].click()
-                        page.wait_for_timeout(2000)
-            except Exception as e:
-                app.logger.info(f"未找到登录按钮，可能已在登录页面: {str(e)}")
-            
-            page.wait_for_timeout(2000)
-            
-            login_status = 'capturing'
-            screenshot = page.screenshot()
-            login_qrcode_base64 = base64.b64encode(screenshot).decode('utf-8')
-            
-            login_status = 'waiting'
-            start_time = time.time()
-            while time.time() - start_time < 180:
-                cookies = context.cookies()
-                ttwid = None
-                passport_csrf_token = None
-                
-                for cookie in cookies:
-                    if cookie['name'] == 'ttwid':
-                        ttwid = cookie['value']
-                    if cookie['name'] == 'passport_csrf_token':
-                        passport_csrf_token = cookie['value']
-                
-                if ttwid and passport_csrf_token:
-                    login_status = 'success'
-                    cookie_string = ''
-                    for cookie in cookies:
-                        cookie_string += f"{cookie['name']}={cookie['value']}; "
-                    
-                    with open(app.config['COOKIES_FILE'], 'w', encoding='utf-8') as f:
-                        f.write(cookie_string.strip())
-                    
-                    global DOUYIN_COOKIES, LAST_COOKIES_UPDATE
-                    DOUYIN_COOKIES = {c['name']: c['value'] for c in cookies}
-                    LAST_COOKIES_UPDATE = time.time()
-                    
-                    login_result = {
-                        'success': True,
-                        'message': '登录成功，Cookie已保存',
-                        'cookies_count': len(cookies),
-                    }
-                    break
-                
-                page.wait_for_timeout(2000)
-                screenshot = page.screenshot()
-                login_qrcode_base64 = base64.b64encode(screenshot).decode('utf-8')
-            else:
-                login_status = 'timeout'
-                login_result = {'success': False, 'message': '登录超时，请重新尝试'}
-            
-            browser.close()
-    except Exception as e:
-        login_status = 'error'
-        login_result = {'success': False, 'message': f'登录失败: {str(e)}'}
-
-@app.route('/api/douyin/qrcode', methods=['GET'])
-def get_douyin_qrcode():
-    global login_thread, login_result, login_status, login_qrcode_base64
-    
-    if not PLAYWRIGHT_AVAILABLE:
-        return jsonify({'error': 'Playwright 未安装，请先安装: pip install playwright && playwright install chromium'}), 500
-    
-    if login_thread and login_thread.is_alive():
-        return jsonify({
-            'success': True,
-            'status': login_status,
-            'qrcode': login_qrcode_base64,
-        })
-    
-    login_result = None
-    login_qrcode_base64 = None
-    login_status = 'idle'
-    
-    login_thread = threading.Thread(target=do_qrcode_login)
-    login_thread.daemon = True
-    login_thread.start()
-    
-    time.sleep(3)
-    
-    return jsonify({
-        'success': True,
-        'status': login_status,
-        'qrcode': login_qrcode_base64,
-        'message': login_status == 'waiting' and '请使用抖音扫码登录' or '正在准备登录二维码...',
-    })
-
-@app.route('/api/douyin/login_status', methods=['GET'])
-def check_login_status():
-    global login_status, login_result, login_thread, login_qrcode_base64
-    
-    if login_thread and login_thread.is_alive():
-        return jsonify({
-            'success': True,
-            'status': login_status,
-            'qrcode': login_qrcode_base64,
-            'message': {
-                'idle': '等待开始',
-                'starting': '正在启动浏览器...',
-                'navigating': '正在打开抖音页面...',
-                'capturing': '正在捕获二维码...',
-                'waiting': '等待用户扫码登录...',
-            }.get(login_status, '未知状态'),
-        })
-    
-    if login_result:
-        return jsonify(login_result)
-    
-    return jsonify({'success': True, 'status': 'idle', 'message': '未开始登录', 'qrcode': None})
-
 @app.route('/api/douyin/cookies_status', methods=['GET'])
 def get_cookies_status():
     cookies_valid = os.path.exists(app.config['COOKIES_FILE'])
@@ -460,19 +297,6 @@ def get_cookies_status():
             'updated': file_time,
         })
     return jsonify({'success': True, 'has_cookies': False, 'age_hours': 0, 'updated': 0})
-
-@app.route('/api/douyin/clear_cookies', methods=['POST'])
-def clear_cookies():
-    try:
-        if os.path.exists(app.config['COOKIES_FILE']):
-            os.remove(app.config['COOKIES_FILE'])
-            global DOUYIN_COOKIES, LAST_COOKIES_UPDATE
-            DOUYIN_COOKIES = {}
-            LAST_COOKIES_UPDATE = 0
-            return jsonify({'success': True, 'message': 'Cookie已清除'})
-        return jsonify({'success': True, 'message': '没有Cookie可清除'})
-    except Exception as e:
-        return jsonify({'error': f'清除Cookie失败: {str(e)}'}), 500
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=app.config['PORT'], debug=False)
