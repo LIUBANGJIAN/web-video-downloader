@@ -68,9 +68,10 @@ def video_info():
         return jsonify({'success': True, **info})
     except Exception as e:
         msg = str(e)
-        if 'cookie' in msg.lower():
+        lower_msg = msg.lower()
+        if any(token in lower_msg for token in ('cookie', 'api 错误', '获取数据失败', '无效响应类型', 'invalid response type', 'http状态错误', 'http status code', 'bad request', '400')):
             cookie_manager.check_validity(force=True)
-            return jsonify({'error': 'Cookie 已失效，请重新扫码', 'needLogin': True}), 401
+            return jsonify({'error': 'Cookie 已失效或解析失败，请重新扫码', 'needLogin': True}), 401
         if '解析服务不可用' in msg:
             return jsonify({'error': msg}), 502
         return jsonify({'error': msg}), 500
@@ -105,9 +106,10 @@ def download_video():
         })
     except Exception as e:
         msg = str(e)
-        if 'cookie' in msg.lower():
+        lower_msg = msg.lower()
+        if any(token in lower_msg for token in ('cookie', 'api 错误', '获取数据失败', '无效响应类型', 'invalid response type', 'http状态错误', 'http status code', 'bad request', '400')):
             cookie_manager.check_validity(force=True)
-            return jsonify({'error': 'Cookie 已失效，请重新扫码', 'needLogin': True}), 401
+            return jsonify({'error': 'Cookie 已失效或解析失败，请重新扫码', 'needLogin': True}), 401
         if '解析服务不可用' in msg:
             return jsonify({'error': msg}), 502
         return jsonify({'error': msg}), 500
