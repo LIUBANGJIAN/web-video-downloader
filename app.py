@@ -6,7 +6,7 @@ import json
 
 app = Flask(__name__)
 
-APP_VERSION = 'v3.0.1'
+APP_VERSION = 'v3.0.3'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 
@@ -14,30 +14,44 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 # 检查 douyin-downloader 是否可用
 DOUYIN_DOWNLOADER_AVAILABLE = False
-DOUYIN_DOWNLOADER_RUN_PATH = ""
 
-# 尝试找到 douyin-downloader 的安装位置和 run.py 路径
-try:
-    result = subprocess.run([sys.executable, '-m', 'pip', 'show', 'douyin-downloader'], 
-                          capture_output=True, text=True)
-    if result.returncode == 0:
-        # 解析安装位置
-        for line in result.stdout.split('\n'):
-            if line.startswith('Location:'):
-                location = line.split(':', 1)[1].strip()
-                # 查找 run.py 文件
-                run_path = os.path.join(location, 'douyin_downloader', 'run.py')
-                if os.path.exists(run_path):
-                    DOUYIN_DOWNLOADER_RUN_PATH = run_path
-                    DOUYIN_DOWNLOADER_AVAILABLE = True
-                    print(f"✓ douyin-downloader 已安装，run.py 路径: {run_path}")
-                break
-        if not DOUYIN_DOWNLOADER_AVAILABLE:
-            print("✗ 未找到 run.py")
-    else:
-        print("✗ douyin-downloader 未安装")
-except Exception as e:
-    print(f"✗ 检查失败: {e}")
+# 测试 douyin-downloader 是否可用
+def check_douyin_downloader():
+    global DOUYIN_DOWNLOADER_AVAILABLE
+    try:
+        # 测试调用方式: python -m douyin_downloader --version
+        result = subprocess.run([sys.executable, '-m', 'douyin_downloader', '--version'],
+                              capture_output=True, text=True, timeout=30)
+        if result.returncode == 0 and result.stdout:
+            DOUYIN_DOWNLOADER_AVAILABLE = True
+            print(f"✓ douyin-downloader 已安装: {result.stdout.strip()}")
+            return
+        print(f"✗ 测试调用失败, 返回码: {result.returncode}")
+        print(f"  stderr: {result.stderr[:200]}")
+    except Exception as e:
+        print(f"✗ 检查失败: {e}")
+    
+    # 尝试另一种方式
+    try:
+        result = subprocess.run([sys.executable, '-c', 'import douyin_downloader; print("OK")'],
+                              capture_output=True, text=True, timeout=10)
+        if result.returncode == 0:
+            print("✓ douyin_downloader 模块可导入")
+            # 查找 run.py 路径
+            import douyin_downloader
+            import inspect
+            module_path = os.path.dirname(inspect.getfile(douyin_downloader))
+            run_path = os.path.join(os.path.dirname(module_path), 'run.py')
+            if os.path.exists(run_path):
+                DOUYIN_DOWNLOADER_AVAILABLE = True
+                print(f"✓ 找到 run.py: {run_path}")
+                return
+    except Exception as e:
+        print(f"✗ 模块导入失败: {e}")
+    
+    print("✗ douyin-downloader 不可用")
+
+check_douyin_downloader()
 
 @app.route('/')
 def index():
@@ -84,7 +98,7 @@ browser_fallback:
         
         # 运行 douyin-downloader
         result = subprocess.run(
-            [sys.executable, DOUYIN_DOWNLOADER_RUN_PATH, '-c', config_path, '-v'],
+            [sys.executable, '-m', 'douyin_downloader', '-c', config_path, '-v'],
             capture_output=True,
             text=True,
             timeout=60
@@ -147,7 +161,7 @@ browser_fallback:
         
         # 运行 douyin-downloader
         result = subprocess.run(
-            [sys.executable, DOUYIN_DOWNLOADER_RUN_PATH, '-c', config_path],
+            [sys.executable, '-m', 'douyin_downloader', '-c', config_path],
             capture_output=True,
             text=True,
             timeout=120
@@ -216,7 +230,7 @@ browser_fallback:
             f.write(config_content)
         
         result = subprocess.run(
-            [sys.executable, DOUYIN_DOWNLOADER_RUN_PATH, '-c', config_path],
+            [sys.executable, '-m', 'douyin_downloader', '-c', config_path],
             capture_output=True,
             text=True,
             timeout=120

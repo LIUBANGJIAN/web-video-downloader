@@ -7,18 +7,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# 先复制 requirements.txt 以利用缓存
 COPY requirements.txt .
 
-# 安装依赖并输出详细日志
-RUN echo "=== 安装依赖 ===" && \
-    pip install --no-cache-dir -U pip && \
-    pip install --no-cache-dir -r requirements.txt -v && \
-    echo "=== 依赖安装完成 ===" && \
-    pip list
+# 安装依赖
+RUN pip install --no-cache-dir -U pip && \
+    pip install --no-cache-dir -r requirements.txt -v
 
-# 复制应用代码
-COPY app.py index.html ./
+# 复制应用代码和测试脚本
+COPY app.py index.html test_install.py ./
 RUN mkdir -p /app/downloads
 
 ENV DOWNLOAD_DIR=/app/downloads \
@@ -27,4 +23,5 @@ ENV DOWNLOAD_DIR=/app/downloads \
 EXPOSE 8787
 VOLUME ["/app/downloads"]
 
-CMD ["python", "app.py"]
+# 先运行测试脚本，然后启动应用
+CMD ["python", "-c", "import test_install; print('\\n=== 启动应用 ==='); import app"]

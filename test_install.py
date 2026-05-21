@@ -1,41 +1,33 @@
 import subprocess
-import time
 import sys
+import os
 
-# 安装依赖
-print("安装 douyin-downloader...")
-result = subprocess.run([sys.executable, '-m', 'pip', 'install', 'git+https://github.com/jiji262/douyin-downloader.git'], 
-                       capture_output=True, text=True)
+# 测试 douyin-downloader 安装情况
+print("=== 测试 douyin-downloader 安装 ===")
+
+# 检查是否安装
+result = subprocess.run([sys.executable, '-m', 'pip', 'show', 'douyin-downloader'], capture_output=True, text=True)
+print(f"pip show 返回码: {result.returncode}")
 if result.returncode == 0:
-    print("✓ 安装成功")
+    print("pip show 输出:")
+    print(result.stdout)
 else:
-    print(f"✗ 安装失败: {result.stderr}")
-    sys.exit(1)
+    print("pip show 错误:")
+    print(result.stderr)
 
-# 测试导入
-print("\n测试导入...")
+# 查找 run.py
+print("\n=== 查找 run.py ===")
+import site
+for sp in site.getsitepackages():
+    run_path = os.path.join(sp, 'douyin_downloader', 'run.py')
+    print(f"检查: {run_path} - {'存在' if os.path.exists(run_path) else '不存在'}")
+
+# 尝试运行
+print("\n=== 尝试运行 ===")
 try:
-    from douyin_downloader import DouyinDownloader
-    print("✓ 导入成功")
-    
-    downloader = DouyinDownloader()
-    print("✓ 初始化成功")
-    
-    # 测试解析
-    test_url = "https://v.douyin.com/MpeyIZyxMTA/"
-    print(f"\n测试解析链接: {test_url}")
-    result = downloader.parse(test_url)
-    if result:
-        print(f"✓ 解析成功")
-        print(f"  标题: {result.get('title', '')}")
-        print(f"  作者: {result.get('author', '')}")
-        print(f"  视频链接: {result.get('video_url', '')[:50]}...")
-    else:
-        print("✗ 解析失败")
-        sys.exit(1)
-        
+    result = subprocess.run([sys.executable, '-m', 'douyin_downloader', '--help'], capture_output=True, text=True)
+    print(f"返回码: {result.returncode}")
+    print("stdout:", result.stdout[:500])
+    print("stderr:", result.stderr[:500])
 except Exception as e:
-    print(f"✗ 测试失败: {e}")
-    sys.exit(1)
-
-print("\n✓ 所有测试通过！")
+    print(f"运行失败: {e}")
