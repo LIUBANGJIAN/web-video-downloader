@@ -6,7 +6,7 @@ import requests
 
 app = Flask(__name__)
 
-APP_VERSION = 'v2.5.5'
+APP_VERSION = 'v2.5.6'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 
@@ -192,23 +192,26 @@ def _parse_douyin_url(url):
             result = _parse_douyin_fallback(url, aweme_id)
             if result:
                 return result
-        
-        return None
-        
+            
+            return None
+        except Exception as e:
+            app.logger.error(f"API解析失败: {str(e)}")
+            
+            # 尝试使用 Playwright
+            if PLAYWRIGHT_AVAILABLE:
+                try:
+                    print(f"使用 Playwright 解析(异常后): {url}")
+                    result = parse_with_playwright(url)
+                    if result:
+                        return result
+                except Exception as pw_e:
+                    app.logger.error(f"Playwright 解析失败: {str(pw_e)}")
+            
+            return _parse_douyin_fallback(url, aweme_id)
+    
     except Exception as e:
         app.logger.error(f"解析抖音链接失败: {str(e)}")
-        
-        # 尝试使用 Playwright
-        if PLAYWRIGHT_AVAILABLE:
-            try:
-                print(f"使用 Playwright 解析(异常后): {url}")
-                result = parse_with_playwright(url)
-                if result:
-                    return result
-            except Exception as pw_e:
-                app.logger.error(f"Playwright 解析失败: {str(pw_e)}")
-        
-        return _parse_douyin_fallback(url, None)
+        return None
 
 def _resolve_short_url(token):
     """尝试解析短链接获取真实ID和类型"""
