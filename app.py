@@ -6,13 +6,21 @@ import requests
 
 app = Flask(__name__)
 
-APP_VERSION = 'v2.4.7'
+APP_VERSION = 'v2.5.0'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 MOBILE_UA = 'Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile Safari/537.36'
+
+# 尝试导入 Playwright 解析器
+try:
+    from playwright_parser import parse_with_playwright
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError as e:
+    print(f"Playwright 导入失败: {e}")
+    PLAYWRIGHT_AVAILABLE = False
 
 def _sanitize_url(url):
     if not url:
@@ -30,6 +38,8 @@ def _extract_url_from_text(text):
         r'(https?://www\.douyin\.com/\d+/)',
         r'(https?://www\.douyin\.com/user/[^/\s]+/video/\d+)',
         r'(https?://www\.iesdouyin\.com/share/video/\d+)',
+        r'(https?://www\.douyin\.com/note/\d+)',
+        r'(https?://www\.iesdouyin\.com/share/note/\d+)',
     ]
     for pattern in patterns:
         match = re.search(pattern, text)
@@ -38,7 +48,7 @@ def _extract_url_from_text(text):
     return None
 
 def _parse_douyin_url(url):
-    """解析抖音分享链接，返回视频/图片信息（参考 douyinVd 库的实现）"""
+    """解析抖音分享链接，返回视频/图片信息"""
     try:
         # 从短链接提取token
         match = re.search(r'v\.douyin\.com/([a-zA-Z0-9_-]+)', url)
@@ -57,6 +67,11 @@ def _parse_douyin_url(url):
         if match:
             return _parse_douyin_note(match.group(1))
         
+        # 分享note类型
+        match = re.search(r'iesdouyin\.com/share/note/(\d+)', url)
+        if match:
+            return _parse_douyin_note(match.group(1))
+        
         # 视频类型 - 提取ID
         aweme_id = None
         match = re.search(r'douyin\.com/video/(\d+)', url)
@@ -70,14 +85,13 @@ def _parse_douyin_url(url):
         if not aweme_id:
             return None
         
-        # 使用douyinVd库的方法 - 直接调用API
+        # 使用API获取视频详情
         headers = {
             'User-Agent': MOBILE_UA,
             'Accept': 'application/json',
             'Referer': 'https://www.douyin.com/',
         }
         
-        # 尝试获取视频详情
         api_url = f'https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids={aweme_id}'
         
         response = requests.get(api_url, headers=headers, timeout=15)
@@ -132,11 +146,33 @@ def _parse_douyin_url(url):
                         'image_url_list': img_list,
                     }
         
-        # 如果上面的方法失败，尝试另一种API
-        return _parse_douyin_fallback(url, aweme_id)
+        # 如果上面的方法失败，尝试备用方法
+        result = _parse_douyin_fallback(url, aweme_id)
+        if result:
+            return result
+        
+        # 如果还是失败，尝试使用 Playwright
+        if PLAYWRIGHT_AVAILABLE:
+            print(f"使用 Playwright 解析: {url}")
+            result = parse_with_playwright(url)
+            if result:
+                return result
+        
+        return None
         
     except Exception as e:
         app.logger.error(f"解析抖音链接失败: {str(e)}")
+        
+        # 尝试使用 Playwright
+        if PLAYWRIGHT_AVAILABLE:
+            try:
+                print(f"使用 Playwright 解析(异常后): {url}")
+                result = parse_with_playwright(url)
+                if result:
+                    return result
+            except Exception as pw_e:
+                app.logger.error(f"Playwright 解析失败: {str(pw_e)}")
+        
         return _parse_douyin_fallback(url, None)
 
 def _resolve_short_url(token):
@@ -154,10 +190,15 @@ def _resolve_short_url(token):
         if match:
             return {'type': 'video', 'id': match.group(1)}
         
-        # 图文类型
+        # 图文类型 - 支持 /note/ 和 /share/note/ 格式
         match = re.search(r'/note/(\d+)', final_url)
         if match:
             return {'type': 'note', 'id': match.group(1)}
+        
+        # 分享视频类型
+        match = re.search(r'/share/video/(\d+)', final_url)
+        if match:
+            return {'type': 'video', 'id': match.group(1)}
         
         return None
     except Exception as e:
@@ -174,7 +215,6 @@ def _parse_douyin_fallback(url, aweme_id=None):
             'Referer': 'https://www.douyin.com/',
         }
         
-        # 获取页面内容
         response = requests.get(url, headers=headers, allow_redirects=True, timeout=15)
         body = response.text
         
@@ -196,15 +236,12 @@ def _parse_douyin_fallback(url, aweme_id=None):
         if video_id:
             video_url = f'https://www.iesdouyin.com/aweme/v1/play/?video_id={video_id}&ratio=1080p&line=0'
             
-            # 提取标题
             desc_match = re.search(r'"desc":\s*"([^"]+)"', body)
             title = desc_match.group(1) if desc_match else ''
             
-            # 提取作者昵称
             nickname_match = re.search(r'"nickname":\s*"([^"]+)"', body)
             author = nickname_match.group(1) if nickname_match else ''
             
-            # 提取封面
             cover_match = re.search(r'"cover":\s*{"uri":"[^"]+","url_list":\["([^"]+)"', body)
             thumbnail = cover_match.group(1) if cover_match else ''
             
@@ -247,27 +284,7 @@ def _parse_douyin_note(note_id):
             'Referer': 'https://www.douyin.com/',
         }
         
-        # 方法1：尝试使用移动端分享页面（iesdouyin.com）
-        share_url = f'https://www.iesdouyin.com/share/note/{note_id}'
-        share_response = requests.get(share_url, headers=headers, timeout=15)
-        
-        img_list = _parse_douyin_images(share_response.text)
-        if img_list:
-            desc_match = re.search(r'"desc":\s*"([^"]+)"', share_response.text)
-            title = desc_match.group(1) if desc_match else ''
-            
-            nickname_match = re.search(r'"nickname":\s*"([^"]+)"', share_response.text)
-            author = nickname_match.group(1) if nickname_match else ''
-            
-            return {
-                'type': 'image',
-                'title': title,
-                'author': author,
-                'thumbnail': img_list[0] if img_list else '',
-                'image_url_list': img_list,
-            }
-        
-        # 方法2：尝试使用移动端API
+        # 方法1：尝试使用移动端API
         api_url = f'https://www.iesdouyin.com/web/api/v2/aweme/iteminfo/?item_ids={note_id}'
         api_response = requests.get(api_url, headers=headers, timeout=15)
         api_data = api_response.json()
@@ -291,6 +308,26 @@ def _parse_douyin_note(note_id):
                         'image_url_list': img_list,
                     }
         
+        # 方法2：尝试使用移动端分享页面
+        share_url = f'https://www.iesdouyin.com/share/note/{note_id}'
+        share_response = requests.get(share_url, headers=headers, timeout=15)
+        
+        img_list = _parse_douyin_images(share_response.text)
+        if img_list:
+            desc_match = re.search(r'"desc":\s*"([^"]+)"', share_response.text)
+            title = desc_match.group(1) if desc_match else ''
+            
+            nickname_match = re.search(r'"nickname":\s*"([^"]+)"', share_response.text)
+            author = nickname_match.group(1) if nickname_match else ''
+            
+            return {
+                'type': 'image',
+                'title': title,
+                'author': author,
+                'thumbnail': img_list[0] if img_list else '',
+                'image_url_list': img_list,
+            }
+        
         # 方法3：尝试PC页面
         pc_url = f'https://www.douyin.com/note/{note_id}'
         pc_response = requests.get(pc_url, headers=headers, allow_redirects=True, timeout=15)
@@ -311,9 +348,30 @@ def _parse_douyin_note(note_id):
                 'image_url_list': img_list,
             }
         
+        # 方法4：使用Playwright解析（图文链接优先使用）
+        if PLAYWRIGHT_AVAILABLE:
+            # 使用移动端分享页面格式，更容易被解析
+            mobile_url = f'https://www.iesdouyin.com/share/note/{note_id}'
+            print(f"使用 Playwright 解析图文: {mobile_url}")
+            result = parse_with_playwright(mobile_url)
+            if result:
+                return result
+        
         return None
     except Exception as e:
         app.logger.error(f"解析图文链接失败: {str(e)}")
+        
+        # 尝试使用Playwright
+        if PLAYWRIGHT_AVAILABLE:
+            try:
+                mobile_url = f'https://www.iesdouyin.com/share/note/{note_id}'
+                print(f"使用 Playwright 解析图文(异常后): {mobile_url}")
+                result = parse_with_playwright(mobile_url)
+                if result:
+                    return result
+            except Exception as pw_e:
+                app.logger.error(f"Playwright 解析图文失败: {str(pw_e)}")
+        
         return None
 
 def _parse_douyin_images(body):
@@ -337,14 +395,18 @@ def _parse_douyin_images(body):
 
 @app.route('/')
 def index():
-    return send_file('index.html')
+    response = send_file('index.html')
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 @app.route('/api/version')
 def version():
     return jsonify({
         'version': APP_VERSION,
-        'backend': 'douyinVd',
-        'playwright': False,
+        'backend': 'douyinVd + Playwright',
+        'playwright': PLAYWRIGHT_AVAILABLE,
     })
 
 @app.route('/api/proxy')
@@ -362,10 +424,8 @@ def proxy_image():
         
         response = requests.get(url, headers=headers, stream=True, timeout=15)
         
-        # 获取Content-Type
         content_type = response.headers.get('Content-Type', 'image/jpeg')
         
-        # 返回图片内容
         return response.content, 200, {'Content-Type': content_type}
     
     except Exception as e:
@@ -497,7 +557,6 @@ def direct_download():
     if not url:
         return jsonify({'error': '缺少URL参数', 'code': 400}), 400
     
-    # 解析抖音链接
     info = _parse_douyin_url(url)
     if not info:
         return jsonify({'error': '解析失败', 'code': 500}), 500
@@ -505,12 +564,10 @@ def direct_download():
     try:
         if info.get('type') == 'video':
             video_url = info['video_url']
-            # 直接重定向到视频URL（iOS快捷指令可以直接下载）
             return redirect(video_url)
         else:
             img_list = info.get('image_url_list', [])
             if img_list:
-                # 返回第一张图片
                 return redirect(img_list[0])
             return jsonify({'error': '未找到图片', 'code': 500}), 500
             

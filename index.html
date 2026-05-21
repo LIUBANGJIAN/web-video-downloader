@@ -26,6 +26,7 @@
             margin: 2px;
         }
         .badge.version { background: rgba(255,255,255,.25); }
+        .badge.playwright { background: rgba(255,193,7,.8); color: #333; }
         .card {
             background: #fff;
             border-radius: 20px;
@@ -118,16 +119,40 @@
         }
         .image-grid {
             display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 8px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
             margin-top: 12px;
+            max-height: 300px;
+            overflow-y: auto;
         }
         .image-grid img {
             width: 100%;
             aspect-ratio: 1;
             object-fit: cover;
-            border-radius: 8px;
+            border-radius: 6px;
             cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+        .image-grid img:hover {
+            border-color: #667eea;
+        }
+        .image-grid img.selected {
+            border-color: #4caf50;
+        }
+        .image-count {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+            text-align: center;
+        }
+        .select-all {
+            font-size: 12px;
+            color: #667eea;
+            cursor: pointer;
+            text-decoration: underline;
+            margin-top: 4px;
+            display: inline-block;
         }
         .footer {
             text-align: center;
@@ -146,6 +171,32 @@
             margin-right: 6px;
         }
         @keyframes spin { to { transform: rotate(360deg); } }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .modal.show { display: flex; }
+        .modal-content {
+            max-width: 90%;
+            max-height: 90%;
+            border-radius: 12px;
+        }
+        .modal-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            color: #fff;
+            font-size: 24px;
+            cursor: pointer;
+        }
     </style>
 </head>
 <body>
@@ -154,8 +205,9 @@
             <div class="icon">📥</div>
             <h1>抖音视频下载器</h1>
             <div class="status-bar">
-                <span class="badge version" id="version">v2.4.7</span>
+                <span class="badge version" id="version">v2.5.0</span>
                 <span class="badge" id="backend">douyinVd</span>
+                <span class="badge playwright" id="playwright">Playwright</span>
             </div>
         </div>
 
@@ -178,13 +230,20 @@
         </div>
 
         <div class="footer">
-            <p>基于 douyinVd 实现 · 支持视频和图文</p>
+            <p>基于 douyinVd + Playwright 实现 · 支持视频和图文</p>
         </div>
+    </div>
+
+    <!-- 图片预览弹窗 -->
+    <div class="modal" id="imageModal" onclick="closeModal()">
+        <span class="modal-close" onclick="closeModal()">×</span>
+        <img class="modal-content" id="modalImage" onclick="event.stopPropagation()">
     </div>
 
     <script>
         let currentType = 'video';
         let currentImageUrls = [];
+        let selectedImages = [];
 
         function showResult(html, type) {
             const box = document.getElementById('result');
@@ -195,16 +254,13 @@
         async function pasteUrl() {
             const input = document.getElementById('url');
             try {
-                // 尝试使用现代剪贴板API
                 const text = await navigator.clipboard.readText();
                 input.value = text;
                 input.focus();
             } catch (e) {
-                // 备用方案：尝试使用execCommand（已弃用但仍支持）
                 try {
                     input.focus();
                     if (document.execCommand('paste')) {
-                        // 粘贴成功
                     } else {
                         alert('请使用快捷键 Ctrl+V 粘贴');
                         input.focus();
@@ -222,6 +278,14 @@
             document.getElementById('downloadBtn').style.display = 'none';
             currentType = 'video';
             currentImageUrls = [];
+            selectedImages = [];
+        }
+
+        function getProxyUrl(url) {
+            if (url.includes('douyinpic.com') || url.includes('iesdouyin.com') || url.includes('snssdk.com')) {
+                return '/api/proxy?url=' + encodeURIComponent(url);
+            }
+            return url;
         }
 
         async function parseVideo() {
@@ -243,15 +307,11 @@
                 if (d.success) {
                     currentType = d.type || 'video';
                     currentImageUrls = d.image_url_list || [];
+                    selectedImages = [];
                     
                     let thumbHtml = '<div class="placeholder">📹</div>';
                     if (d.thumbnail && d.thumbnail.startsWith('http')) {
-                        // 使用代理URL处理跨域问题
-                        let thumbUrl = d.thumbnail;
-                        // 如果是抖音图片域名，使用代理
-                        if (thumbUrl.includes('douyinpic.com') || thumbUrl.includes('iesdouyin.com')) {
-                            thumbUrl = '/api/proxy?url=' + encodeURIComponent(d.thumbnail);
-                        }
+                        let thumbUrl = getProxyUrl(d.thumbnail);
                         thumbHtml = '<img src="' + thumbUrl + '" alt="缩略图" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'" />' +
                                     '<div class="placeholder" style="display:none">📹</div>';
                     }
@@ -264,16 +324,20 @@
                     
                     // 如果是图文，显示图片网格
                     if (currentType === 'image' && currentImageUrls.length > 0) {
-                        html += '<div class="image-grid">';
+                        html += '<div class="image-grid" id="imageGrid">';
                         currentImageUrls.forEach((imgUrl, index) => {
-                            html += '<img src="' + imgUrl + '" onclick="downloadImage(\'' + escapeHtml(imgUrl) + '\')" title="点击下载第' + (index + 1) + '张" />';
+                            const proxyUrl = getProxyUrl(imgUrl);
+                            html += '<img src="' + proxyUrl + '" data-index="' + index + 
+                                    '" onclick="toggleImageSelect(' + index + ')" title="点击选择/取消选择" />';
                         });
                         html += '</div>';
+                        html += '<div class="image-count">共 ' + currentImageUrls.length + ' 张图片</div>';
+                        html += '<div style="text-align:center"><span class="select-all" onclick="selectAllImages()">全选/取消全选</span></div>';
                     }
                     
                     showResult(html, 'ok');
                     document.getElementById('downloadBtn').style.display = 'block';
-                    document.getElementById('dlText').textContent = currentType === 'image' ? '下载全部图片' : '下载视频';
+                    document.getElementById('dlText').textContent = currentType === 'image' ? '下载选中图片' : '下载视频';
                 } else {
                     showResult('<p>' + (d.error || '解析失败') + '</p>', 'err');
                 }
@@ -285,6 +349,43 @@
             }
         }
 
+        function toggleImageSelect(index) {
+            const img = document.querySelector('#imageGrid img[data-index="' + index + '"]');
+            if (selectedImages.includes(index)) {
+                selectedImages = selectedImages.filter(i => i !== index);
+                img.classList.remove('selected');
+            } else {
+                selectedImages.push(index);
+                img.classList.add('selected');
+            }
+            
+            const dlBtn = document.getElementById('dlText');
+            if (selectedImages.length === 0) {
+                dlBtn.textContent = '下载全部图片';
+            } else if (selectedImages.length === currentImageUrls.length) {
+                dlBtn.textContent = '下载全部图片 (' + selectedImages.length + ')';
+            } else {
+                dlBtn.textContent = '下载选中 (' + selectedImages.length + ')';
+            }
+        }
+
+        function selectAllImages() {
+            if (selectedImages.length === currentImageUrls.length) {
+                selectedImages = [];
+                document.querySelectorAll('#imageGrid img').forEach(img => img.classList.remove('selected'));
+            } else {
+                selectedImages = [...Array(currentImageUrls.length).keys()];
+                document.querySelectorAll('#imageGrid img').forEach(img => img.classList.add('selected'));
+            }
+            
+            const dlBtn = document.getElementById('dlText');
+            if (selectedImages.length === 0) {
+                dlBtn.textContent = '下载全部图片';
+            } else {
+                dlBtn.textContent = '下载选中 (' + selectedImages.length + ')';
+            }
+        }
+
         async function downloadItem() {
             const url = document.getElementById('url').value.trim();
             const btn = document.getElementById('downloadBtn');
@@ -293,44 +394,67 @@
             txt.innerHTML = '<span class="loading"></span>下载中...';
 
             try {
-                const r = await fetch('/api/download', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ url })
-                });
-                const d = await r.json();
-                if (d.success) {
-                    const mb = (d.fileSize / 1024 / 1024).toFixed(2);
-                    // 获取当前内容，但移除之前的保存按钮和大小信息
-                    let html = document.getElementById('resultBody').innerHTML;
-                    // 移除之前添加的下载相关内容
-                    html = html.replace(/<p style="margin-top:10px">.*?<\/p>/g, '');
-                    html = html.replace(/<a class="btn-dl"[^>]*>.*?<\/a>/g, '');
+                // 如果是图文且有选中的图片，下载第一张选中的图片
+                if (currentType === 'image' && selectedImages.length > 0) {
+                    const firstSelectedIndex = selectedImages[0];
+                    const imgUrl = currentImageUrls[firstSelectedIndex];
                     
-                    if (d.imageCount && d.imageCount > 1) {
-                        html += '<p style="margin-top:10px">共 ' + d.imageCount + ' 张图片</p>';
+                    // 创建下载链接
+                    const link = document.createElement('a');
+                    link.href = imgUrl;
+                    link.download = 'douyin_image_' + (firstSelectedIndex + 1) + '.jpg';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    
+                    // 如果有多个选中，提示用户
+                    if (selectedImages.length > 1) {
+                        showResult('<p>已开始下载第1张图片，请依次下载其他选中的图片</p>', 'ok');
+                    } else {
+                        showResult('<p>图片下载成功!</p>', 'ok');
                     }
-                    html += '<p style="margin-top:10px">大小: ' + mb + ' MB</p>' +
-                        '<a class="btn-dl" href="' + d.videoUrl + '" download>📥 保存</a>';
-                    showResult(html, 'ok');
                 } else {
-                    showResult('<p>' + (d.error || '下载失败') + '</p>', 'err');
+                    // 正常下载流程
+                    const r = await fetch('/api/download', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ url })
+                    });
+                    const d = await r.json();
+                    if (d.success) {
+                        const mb = (d.fileSize / 1024 / 1024).toFixed(2);
+                        let html = document.getElementById('resultBody').innerHTML;
+                        html = html.replace(/<p style="margin-top:10px">.*?<\/p>/g, '');
+                        html = html.replace(/<a class="btn-dl"[^>]*>.*?<\/a>/g, '');
+                        
+                        if (d.imageCount && d.imageCount > 1) {
+                            html += '<p style="margin-top:10px">共 ' + d.imageCount + ' 张图片</p>';
+                        }
+                        html += '<p style="margin-top:10px">大小: ' + mb + ' MB</p>' +
+                            '<a class="btn-dl" href="' + d.videoUrl + '" download>📥 保存</a>';
+                        showResult(html, 'ok');
+                    } else {
+                        showResult('<p>' + (d.error || '下载失败') + '</p>', 'err');
+                    }
                 }
             } catch (e) {
                 showResult('<p>网络错误: ' + e.message + '</p>', 'err');
             } finally {
                 btn.disabled = false;
-                txt.textContent = currentType === 'image' ? '下载全部图片' : '下载视频';
+                txt.textContent = currentType === 'image' ? '下载选中图片' : '下载视频';
             }
         }
 
-        function downloadImage(imgUrl) {
-            const link = document.createElement('a');
-            link.href = imgUrl;
-            link.download = 'douyin_image.jpg';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+        function openModal(imgUrl) {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modalImg.src = getProxyUrl(imgUrl);
+            modal.classList.add('show');
+        }
+
+        function closeModal() {
+            const modal = document.getElementById('imageModal');
+            modal.classList.remove('show');
         }
 
         function escapeHtml(t) {
@@ -341,12 +465,15 @@
 
         async function initApp() {
             try {
-                const r = await fetch('/api/version');
+                const r = await fetch('/api/version?' + Date.now());
                 const d = await r.json();
-                document.getElementById('version').textContent = d.version || 'v2.4.1';
-                document.getElementById('backend').textContent = 'douyinVd';
+                document.getElementById('version').textContent = d.version || 'v2.5.0';
+                document.getElementById('backend').textContent = d.backend || 'douyinVd';
+                document.getElementById('playwright').textContent = d.playwright ? 'Playwright ✓' : 'Playwright ✗';
+                document.getElementById('playwright').style.background = d.playwright ? 'rgba(76,175,80,.8)' : 'rgba(255,193,7,.8)';
             } catch (e) {
                 console.error('Failed to fetch version:', e);
+                document.getElementById('version').textContent = 'v2.5.0';
             }
         }
 
