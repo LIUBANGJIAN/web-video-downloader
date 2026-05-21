@@ -2,57 +2,85 @@ from playwright.sync_api import sync_playwright
 import re
 import json
 import time
+import random
 
-def parse_with_playwright(url, timeout=30000):
+def parse_with_playwright(url, timeout=45000):
     """使用Playwright解析抖音视频/图文链接"""
     result = None
     
-    with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                '--no-sandbox',
-                '--disable-setuid-sandbox',
-                '--disable-gpu',
-                '--disable-dev-shm-usage',
-                '--window-size=1280,720',
-                '--user-agent=Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
-            ]
-        )
-        
-        try:
-            context = browser.new_context(
-                viewport={'width': 414, 'height': 736},
-                user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1'
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-gpu',
+                    '--disable-dev-shm-usage',
+                    '--disable-software-rasterizer',
+                    '--disable-extensions',
+                    '--disable-web-security',
+                    '--allow-running-insecure-content',
+                    '--window-size=414,736',
+                ]
             )
-            page = context.new_page()
             
-            # 导航到页面
-            page.goto(url, timeout=timeout)
-            
-            # 等待页面加载
-            page.wait_for_load_state('networkidle', timeout=timeout)
-            time.sleep(2)  # 额外等待确保JS加载完成
-            
-            # 方法1：尝试从_ROUTER_DATA获取数据（通过evaluate）
-            result = extract_from_router_data(page)
-            
-            # 方法2：如果方法1失败，尝试从页面内容提取
-            if not result:
+            try:
+                context = browser.new_context(
+                    viewport={'width': 414, 'height': 736},
+                    user_agent='Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+                    accept_language='zh-CN,zh;q=0.9,en;q=0.8',
+                    locale='zh-CN',
+                )
+                page = context.new_page()
+                
+                # 设置请求超时
+                page.set_default_timeout(timeout)
+                
+                # 导航到页面
+                print(f"Playwright: 开始访问 {url}")
+                page.goto(url, timeout=timeout)
+                
+                # 等待页面加载
+                try:
+                    page.wait_for_load_state('networkidle', timeout=timeout)
+                except:
+                    print("Playwright: networkidle超时，继续执行")
+                
+                # 随机延迟
+                time.sleep(random.uniform(2, 4))
+                
+                # 方法1：尝试从_ROUTER_DATA获取数据
+                result = extract_from_router_data(page)
+                if result:
+                    print(f"Playwright: 从_ROUTER_DATA提取成功")
+                    return result
+                
+                # 方法2：尝试从页面内容提取
                 content = page.content()
                 result = extract_data_from_content(content, url)
-            
-        except Exception as e:
-            print(f"Playwright解析错误: {e}")
-        finally:
-            browser.close()
+                if result:
+                    print(f"Playwright: 从页面内容提取成功")
+                    return result
+                    
+                print("Playwright: 未能提取数据")
+                
+            except Exception as e:
+                print(f"Playwright解析错误: {e}")
+            finally:
+                try:
+                    browser.close()
+                except:
+                    pass
+    
+    except Exception as e:
+        print(f"Playwright初始化错误: {e}")
     
     return result
 
 def extract_from_router_data(page):
     """从_ROUTER_DATA提取数据"""
     try:
-        # 获取loaderData中的视频/图文数据
         data = page.evaluate('''
             () => {
                 const routerData = window._ROUTER_DATA;
@@ -86,7 +114,6 @@ def extract_from_router_data(page):
 def parse_item_data(item):
     """解析单个视频/图文项"""
     try:
-        # 检查是否是图文（aweme_type == 2 通常是图文）
         aweme_type = item.get('aweme_type', 0)
         has_images = 'images' in item and isinstance(item['images'], list) and len(item['images']) > 0
         
@@ -108,7 +135,6 @@ def parse_item_data(item):
                     'image_url_list': img_list,
                 }
         
-        # 否则视为视频
         if 'video' in item and isinstance(item['video'], dict):
             video = item['video']
             play_addr = video.get('play_addr', {})
@@ -134,17 +160,14 @@ def parse_item_data(item):
 
 def extract_data_from_content(content, url):
     """从页面内容中提取视频/图片数据"""
-    # 检查是否是图文链接
     if '/note/' in url:
         return extract_note_data(content)
     
-    # 检查是否是视频链接
     return extract_video_data(content)
 
 def extract_note_data(content):
     """提取图文数据"""
     try:
-        # 尝试解析__NEXT_DATA__
         next_data_match = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.*?)</script>', content)
         if next_data_match:
             try:
@@ -153,7 +176,6 @@ def extract_note_data(content):
             except:
                 pass
         
-        # 尝试解析__INIT_PROPS__
         init_props_match = re.search(r'window\.__INIT_PROPS__\s*=\s*([^<]+);', content)
         if init_props_match:
             try:
@@ -162,11 +184,9 @@ def extract_note_data(content):
             except:
                 pass
         
-        # 尝试直接提取图片URL
         img_pattern = r'"url_list":\["(https://[^"]+douyinpic[^"]+)"'
         matches = re.findall(img_pattern, content)
         if matches:
-            # 过滤重复和缩略图
             unique_urls = []
             seen = set()
             for url in matches:
@@ -303,7 +323,6 @@ def parse_init_props_for_note(data):
     except:
         return None
 
-# 测试函数
 if __name__ == '__main__':
     import sys
     if len(sys.argv) > 1:

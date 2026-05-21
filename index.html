@@ -205,7 +205,7 @@
             <div class="icon">📥</div>
             <h1>抖音视频下载器</h1>
             <div class="status-bar">
-                <span class="badge version" id="version">v2.5.1</span>
+                <span class="badge version" id="version">v2.5.3</span>
                 <span class="badge" id="backend">douyinVd</span>
                 <span class="badge playwright" id="playwright">Playwright</span>
             </div>
@@ -468,7 +468,7 @@
                 const r = await fetch('/api/version?' + Date.now());
                 const d = await r.json();
                 console.log('Version API response:', d);
-                document.getElementById('version').textContent = d.version || 'v2.5.1';
+                document.getElementById('version').textContent = d.version || 'v2.5.3';
                 document.getElementById('backend').textContent = d.backend || 'douyinVd';
                 const pwStatus = d.playwright === true || d.playwright === 'true';
                 console.log('Playwright status:', d.playwright, '->', pwStatus);
@@ -476,7 +476,7 @@
                 document.getElementById('playwright').style.background = pwStatus ? 'rgba(76,175,80,.8)' : 'rgba(255,193,7,.8)';
             } catch (e) {
                 console.error('Failed to fetch version:', e);
-                document.getElementById('version').textContent = 'v2.5.1';
+                document.getElementById('version').textContent = 'v2.5.3';
             }
         }
 

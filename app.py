@@ -6,7 +6,7 @@ import requests
 
 app = Flask(__name__)
 
-APP_VERSION = 'v2.5.1'
+APP_VERSION = 'v2.5.3'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 
@@ -14,13 +14,16 @@ os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
 MOBILE_UA = 'Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile Safari/537.36'
 
-# 尝试导入 Playwright 解析器
-try:
-    from playwright_parser import parse_with_playwright
-    PLAYWRIGHT_AVAILABLE = True
-except ImportError as e:
-    print(f"Playwright 导入失败: {e}")
-    PLAYWRIGHT_AVAILABLE = False
+# 暂时禁用 Playwright（在 Flask 服务器中使用会导致崩溃）
+# 直接使用 douyinVd 库解析
+PLAYWRIGHT_AVAILABLE = False
+parse_with_playwright = None
+
+def _init_playwright():
+    """延迟初始化 Playwright"""
+    global PLAYWRIGHT_AVAILABLE, parse_with_playwright
+    # 暂时返回 False，避免在 Flask 中使用 Playwright
+    return False
 
 def _sanitize_url(url):
     if not url:
@@ -50,6 +53,20 @@ def _extract_url_from_text(text):
 def _parse_douyin_url(url):
     """解析抖音分享链接，返回视频/图片信息"""
     try:
+        # 优先使用 Playwright 解析
+        if _init_playwright():
+            print(f"优先使用 Playwright 解析: {url}")
+            try:
+                result = parse_with_playwright(url)
+                if result:
+                    print(f"Playwright 解析成功: {result.get('type')}")
+                    return result
+                else:
+                    print("Playwright 解析返回空结果")
+            except Exception as pw_e:
+                print(f"Playwright 解析异常: {pw_e}")
+        
+        # 如果 Playwright 不可用或失败，尝试其他方法
         # 从短链接提取token
         match = re.search(r'v\.douyin\.com/([a-zA-Z0-9_-]+)', url)
         if match:
@@ -150,13 +167,6 @@ def _parse_douyin_url(url):
         result = _parse_douyin_fallback(url, aweme_id)
         if result:
             return result
-        
-        # 如果还是失败，尝试使用 Playwright
-        if PLAYWRIGHT_AVAILABLE:
-            print(f"使用 Playwright 解析: {url}")
-            result = parse_with_playwright(url)
-            if result:
-                return result
         
         return None
         
@@ -403,6 +413,8 @@ def index():
 
 @app.route('/api/version')
 def version():
+    # 尝试初始化 Playwright 来检查是否可用
+    _init_playwright()
     return jsonify({
         'version': APP_VERSION,
         'backend': 'douyinVd + Playwright',
@@ -607,4 +619,5 @@ def quick_download():
 
 if __name__ == '__main__':
     port = app.config['PORT']
-    app.run(host='0.0.0.0', port=port)
+    # 使用单线程模式，因为 Playwright 不支持多线程
+    app.run(host='0.0.0.0', port=port, threaded=False)
