@@ -6,7 +6,7 @@ import json
 
 app = Flask(__name__)
 
-APP_VERSION = 'v3.0.5'
+APP_VERSION = 'v3.0.6'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 
