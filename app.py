@@ -6,7 +6,7 @@ import json
 
 app = Flask(__name__)
 
-APP_VERSION = 'v3.0.6'
+APP_VERSION = 'v3.0.7'
 app.config['UPLOAD_FOLDER'] = os.environ.get('DOWNLOAD_DIR', '/app/downloads')
 app.config['PORT'] = int(os.environ.get('PORT', 8787))
 
@@ -167,15 +167,20 @@ browser_fallback:
         os.remove(config_path)
         
         if result.returncode == 0:
-            # 查找下载的文件
-            downloaded_files = []
-            for item in os.listdir(app.config['UPLOAD_FOLDER']):
-                if item.endswith('.mp4') or item.endswith('.json'):
-                    downloaded_files.append(item)
+            # 查找下载的文件，按修改时间排序，返回最新的
+            video_files = []
+            upload_folder = app.config['UPLOAD_FOLDER']
+            for item in os.listdir(upload_folder):
+                if item.endswith('.mp4'):
+                    file_path = os.path.join(upload_folder, item)
+                    # 获取文件修改时间
+                    mtime = os.path.getmtime(file_path)
+                    video_files.append((mtime, item))
             
-            if downloaded_files:
-                # 返回第一个视频文件
-                video_file = [f for f in downloaded_files if f.endswith('.mp4')][0]
+            if video_files:
+                # 按修改时间降序排序，取最新的一个
+                video_files.sort(key=lambda x: x[0], reverse=True)
+                video_file = video_files[0][1]
                 return jsonify({
                     'success': True,
                     'filename': video_file,
